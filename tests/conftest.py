@@ -24,6 +24,13 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", forbidden)
 
 
+@pytest.fixture(autouse=True)
+def isolated_llm_environment(monkeypatch):
+    """Даже реальные настройки разработчика не должны включать внешний API в тестах."""
+    for name in ("LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "LLM_TIMEOUT_SECONDS"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def merlo_html():
     return (FIXTURES / "merlo.html").read_text(encoding="utf-8")

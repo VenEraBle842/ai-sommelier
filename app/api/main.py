@@ -1,5 +1,6 @@
-"""Минимальный API чтения локального снимка; сетевой загрузки здесь нет."""
+"""API чтения и подбора по локальному снимку; загрузка каталога выполняется отдельно."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -12,23 +13,42 @@ from starlette.exceptions import HTTPException
 from app.catalog.models import Wine
 from app.catalog.repository import WineRepository
 from app.db.database import init_database
+from app.llm.base import LLMConfigurationError, TextLLM
+from app.llm.client import CompatibleTextClient, LLMSettings
+from app.recommendation.schemas import RecommendationRequest, RecommendationResponse
+from app.recommendation.service import RecommendationService
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(db_path: str | Path | None = None, *, llm: TextLLM | None = None) -> FastAPI:
     """Создать API с отдельным жизненным циклом SQLite."""
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         engine = init_database(db_path)
         application.state.repository = WineRepository(engine)
+        configured_llm = llm
+        if configured_llm is None:
+            try:
+                settings = LLMSettings.from_env()
+                if settings is not None:
+                    configured_llm = CompatibleTextClient(settings)
+            except LLMConfigurationError:
+                logging.getLogger(__name__).warning(
+                    "Настройки внешней модели некорректны; включён ограниченный локальный разбор."
+                )
+        application.state.recommendations = RecommendationService(
+            application.state.repository, configured_llm
+        )
         try:
             yield
         finally:
+            if configured_llm is not None and configured_llm is not llm:
+                configured_llm.close()
             engine.dispose()
 
     application = FastAPI(
-        title="Локальный каталог вин",
-        description="Чтение сохранённых карточек vino-svoe.ru. Цены могут отсутствовать.",
+        title="Винный помощник",
+        description="Подбор вина и чтение сохранённых карточек vino-svoe.ru. Цены могут отсутствовать.",
         version="0.1.0",
         lifespan=lifespan,
         docs_url=None,
@@ -41,7 +61,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         return JSONResponse(
             status_code=422,
             content={
-                "detail": "Некорректные параметры запроса. Проверьте идентификатор, размер страницы и смещение."
+                "detail": "Некорректные параметры запроса. Проверьте сообщение, предпочтения, идентификатор, размер страницы и смещение."
             },
         )
 
@@ -80,6 +100,15 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         if wine is None:
             raise HTTPException(status_code=404, detail="Вино не найдено в локальном каталоге.")
         return wine
+
+    @application.post(
+        "/recommendations",
+        response_model=RecommendationResponse,
+        summary="Подобрать вино по пожеланиям",
+    )
+    def recommend(payload: RecommendationRequest, request: Request) -> RecommendationResponse:
+        """Рекомендовать только сохранённые вина; синхронизация каталога здесь не запускается."""
+        return request.app.state.recommendations.recommend(payload)
 
     return application
 
