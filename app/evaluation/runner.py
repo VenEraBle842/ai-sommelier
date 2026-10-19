@@ -33,7 +33,7 @@ class SnapshotCard(BaseModel):
 
 
 def load_snapshot(repository: WineRepository) -> list[dict[str, Any]]:
-    """Проверить контрольные суммы и разобрать HTML штатным парсером во временную базу."""
+    """Проверить контрольные суммы и разобрать HTML штатным парсером в указанный репозиторий."""
     cards = TypeAdapter(list[SnapshotCard]).validate_json((DATA / "snapshot.json").read_bytes())
     manifest = []
     for card in cards:
