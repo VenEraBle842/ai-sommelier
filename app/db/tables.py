@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, Integer, Numeric, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
@@ -52,3 +52,15 @@ class WineRecord(Base):
     image_url: Mapped[str | None] = mapped_column(Text)
     price_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     scraped_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class UserEventRecord(Base):
+    """Локальная история показов и оценок; каталог не изменяется при обратной связи."""
+
+    __tablename__ = "user_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    wine_id: Mapped[int] = mapped_column(ForeignKey("wines.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(20))
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime())

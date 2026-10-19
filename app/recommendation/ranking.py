@@ -6,6 +6,7 @@ from decimal import Decimal
 from app.catalog.models import Wine
 from app.recommendation.schemas import Filters, ScoreComponent, UserIntent
 from app.recommendation.vocabulary import negative_taste_evidence, normalize, taste_evidence
+from app.users.preferences import PreferenceProfile
 
 WEIGHTS = {
     "food": Decimal("10"),
@@ -60,7 +61,9 @@ def has_meaningful_relevance(candidate: RankedWine) -> bool:
     )
 
 
-def score_wine(wine: Wine, intent: UserIntent) -> RankedWine:
+def score_wine(
+    wine: Wine, intent: UserIntent, profile: PreferenceProfile | None = None
+) -> RankedWine:
     """Начислить баллы только за совпадения с полями или описанием источника."""
     parts: list[ScoreComponent] = []
 
@@ -154,10 +157,14 @@ def score_wine(wine: Wine, intent: UserIntent) -> RankedWine:
                 reason="Это реальная позиция локального каталога; подтверждённых совпадений с дополнительными пожеланиями нет.",
             )
         )
+    if profile is not None:
+        parts.extend(profile.components(wine))
     return RankedWine(wine.id, sum((p.score for p in parts), Decimal(0)), parts)
 
 
-def rank_wines(wines: list[Wine], intent: UserIntent) -> list[RankedWine]:
+def rank_wines(
+    wines: list[Wine], intent: UserIntent, profile: PreferenceProfile | None = None
+) -> list[RankedWine]:
     """При равенстве баллов порядок определяется постоянным локальным id."""
-    ranked = [score_wine(wine, intent) for wine in wines]
+    ranked = [score_wine(wine, intent, profile) for wine in wines]
     return sorted(ranked, key=lambda item: (-item.score, item.wine_id))

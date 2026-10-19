@@ -22,7 +22,9 @@ def test_api_reads_only_persisted_records(tmp_path, merlo):
     async def verify():
         async with app.router.lifespan_context(app):
             # Обработчики проверяются напрямую: тест не требует сокетов и фонового сервера.
-            routes = {route.path: route.endpoint for route in app.routes}
+            routes = {
+                route.path: route.endpoint for route in app.routes if hasattr(route, "endpoint")
+            }
             request = Request({"type": "http", "app": app})
             wines = routes["/wines"](request, limit=50, offset=0)
             assert [wine.id for wine in wines] == [saved.id]

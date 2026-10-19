@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf3eb">
+  <title>Подбор вина — Своё Вино</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+  <script src="{{ url_for('static', path='/app.js') }}" type="module"></script>
+</head>
+<body>
+  <a class="skip" href="#selection">Перейти к подборке</a>
+  <header class="site-header">
+    <a class="site-name" href="https://vino-svoe.ru/" target="_blank" rel="noopener noreferrer">Своё Вино</a>
+    <nav class="site-nav" aria-label="Основная навигация">
+      <a href="https://vino-svoe.ru/wines" target="_blank" rel="noopener noreferrer">Свои вина</a>
+      <a href="/" aria-current="page">Подбор вина</a>
+      <a href="https://vino-svoe.ru/wineries" target="_blank" rel="noopener noreferrer">Винодельни и регионы</a>
+    </nav>
+    <button id="history-open" class="utility-button" type="button">Ваши оценки</button>
+  </header>
+
+  <main class="page">
+    <nav class="breadcrumbs" aria-label="Путь страницы"><a href="https://vino-svoe.ru/wines" target="_blank" rel="noopener noreferrer">Свои вина</a><span aria-hidden="true">›</span><span aria-current="page">Подбор вина</span></nav>
+    <div class="page-heading">
+      <div><h1>Подбор вина</h1><p>По блюду и вашим предпочтениям — до трёх подходящих вин из каталога.</p></div>
+    </div>
+
+    <div class="workspace">
+      <aside class="request-panel" aria-labelledby="request-heading">
+        <div class="panel-heading"><h2 id="request-heading">Ваши пожелания</h2><button type="button" id="reset" class="text-button" hidden>Сбросить</button></div>
+        <p class="panel-intro">Укажите блюдо, цвет, сладость, сорт или регион. При необходимости зададим один уточняющий вопрос.</p>
+        <section id="conversation" class="conversation" aria-label="Уточнение запроса" aria-live="polite"></section>
+        <form id="request-form" novalidate>
+          <label id="message-label" for="message">Что подберём сегодня?</label>
+          <textarea id="message" name="message" rows="4" maxlength="2000" required aria-describedby="input-hint" placeholder="Красное сухое к стейку"></textarea>
+          <p class="field-hint" id="input-hint">Можно добавить пожелания по вкусу и бюджет.</p>
+          <button class="primary-button" id="submit" type="submit">Подобрать вино</button>
+        </form>
+        <div class="examples" id="examples">
+          <h3>Примеры запросов</h3>
+          <button type="button" data-example="Красное сухое к стейку">Красное сухое к стейку</button>
+          <button type="button" data-example="Белое сухое к рыбе">Белое сухое к рыбе</button>
+        </div>
+        <p id="identity-note" class="small-note identity-note">Ваши оценки сохраняются в этом браузере и учитываются при следующем подборе.</p>
+      </aside>
+
+      <section id="selection" class="selection" aria-labelledby="selection-heading" tabindex="-1">
+        <div class="selection-header"><h2 id="selection-heading">Каталог для подбора</h2><span id="result-count" class="result-count" hidden></span></div>
+        <p id="result-message" class="result-message" role="status">Показаны карточки каталога. Отправьте запрос, чтобы получить персональную подборку.</p>
+        <div id="warnings" class="warnings" aria-live="polite"></div>
+        <div id="results" class="product-grid" aria-busy="true"><div class="state-panel"><h3>Загружаем карточки…</h3><p>Подождите немного.</p></div></div>
+        <noscript><p class="notice">Для подбора вина и сохранения оценок включите JavaScript в браузере.</p></noscript>
+      </section>
+    </div>
+  </main>
+  <footer class="site-footer"><p>18+ · Чрезмерное употребление алкоголя вредит вашему здоровью.</p><p>Подбор вин по данным <a href="https://vino-svoe.ru/wines" target="_blank" rel="noopener noreferrer">каталога «Своё Вино»</a></p></footer>
+
+  <dialog id="history-dialog" aria-labelledby="history-heading">
+    <div class="dialog-header"><h2 id="history-heading">Ваши оценки и выбор</h2><button class="utility-button" type="button" data-close="history-dialog" aria-label="Закрыть историю">Закрыть</button></div>
+    <p class="small-note">Последняя оценка вина заменяет предыдущую. Просмотренные подборки и открытые страницы не считаются оценкой.</p>
+    <div id="history-content" aria-live="polite"></div>
+  </dialog>
+  <dialog id="wine-dialog" aria-labelledby="wine-heading">
+    <div class="dialog-header"><span class="small-note">Карточка каталога</span><button class="utility-button" type="button" data-close="wine-dialog" aria-label="Закрыть карточку">Закрыть</button></div>
+    <div id="wine-details"></div>
+  </dialog>
+</body>
+</html>

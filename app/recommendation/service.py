@@ -25,6 +25,7 @@ from app.recommendation.schemas import (
 )
 from app.recommendation.taste import reconcile_taste_signals
 from app.recommendation.vocabulary import CatalogVocabulary
+from app.users.preferences import PreferenceProfile
 
 logger = logging.getLogger(__name__)
 BUDGET_UNAVAILABLE = "В каталоге нет подтверждённых цен. Учтены остальные пожелания, но соответствие вашему бюджету гарантировать нельзя."
@@ -55,7 +56,9 @@ class RecommendationService:
             result.extend(page)
         return result
 
-    def recommend(self, request: RecommendationRequest) -> RecommendationResponse:
+    def recommend(
+        self, request: RecommendationRequest, *, profile: PreferenceProfile | None = None
+    ) -> RecommendationResponse:
         """Извлечь намерение или перейти к ограниченному русскому словарю."""
         wines = self._catalog()
         vocabulary = CatalogVocabulary.from_wines(wines)
@@ -96,6 +99,7 @@ class RecommendationService:
             extraction_source=source,
             warnings=warnings,
             use_llm_explanation=use_llm_explanation,
+            profile=profile,
         )
 
     def recommend_intent(
@@ -108,6 +112,7 @@ class RecommendationService:
         extraction_source: Literal["llm", "fallback"] = "fallback",
         warnings: list[str] | None = None,
         use_llm_explanation: bool = True,
+        profile: PreferenceProfile | None = None,
     ) -> RecommendationResponse:
         """Тот же движок доступен для уже структурированных предпочтений без LLM."""
         if not 1 <= limit <= 5:
@@ -172,7 +177,7 @@ class RecommendationService:
             )
         eligible = [
             candidate
-            for candidate in rank_wines(candidates, intent)
+            for candidate in rank_wines(candidates, intent, profile)
             if has_meaningful_relevance(candidate)
         ]
         if not eligible:
@@ -198,7 +203,7 @@ class RecommendationService:
                 assert intent.budget_max_rub is not None
                 if wine.price_rub is None or wine.price_rub > intent.budget_max_rub:
                     continue
-            ranked = score_wine(wine, intent)
+            ranked = score_wine(wine, intent, profile)
             if not has_meaningful_relevance(ranked):
                 continue
             reasons = [part.reason for part in ranked.breakdown]
@@ -283,7 +288,11 @@ class RecommendationService:
                 )
                 continue
             # Модель не может скрыть штраф или неопределённость по нежелательному свойству.
-            required = [key for key in reasons if key.startswith("negative_taste:")]
+            required = [
+                key
+                for key in reasons
+                if key.startswith("negative_taste:") or key == "personalization"
+            ]
             item.reasons = [
                 reasons[key] for key in dict.fromkeys([*selection.reason_ids, *required])
             ]
