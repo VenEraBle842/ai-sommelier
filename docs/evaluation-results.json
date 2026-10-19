@@ -1,0 +1,432 @@
+{
+  "scenario_count": 24,
+  "recommendation_count": 24,
+  "catalog_validity": 1.0,
+  "hallucination_rate": 0.0,
+  "hard_constraint_accuracy": 1.0,
+  "hard_constraint_by_dimension": {
+    "color": {
+      "accuracy": 1.0,
+      "count": 15
+    },
+    "sweetness": {
+      "accuracy": 1.0,
+      "count": 18
+    },
+    "grapes": {
+      "accuracy": 1.0,
+      "count": 4
+    },
+    "regions": {
+      "accuracy": 1.0,
+      "count": 4
+    },
+    "producer": {
+      "accuracy": 1.0,
+      "count": 1
+    },
+    "source_categories": {
+      "accuracy": 1.0,
+      "count": 1
+    },
+    "budget": {
+      "accuracy": "N/A",
+      "count": 0
+    }
+  },
+  "food_match_rate": 0.6666666666666666,
+  "hit_rate_at_k": 1.0,
+  "scenario_success_rate": 1.0,
+  "factual_field_accuracy": 1.0,
+  "denominators": {
+    "scenarios": 24,
+    "status_correct": 24,
+    "budget_unavailable_checks": 1,
+    "budget_unavailable_passed": 1,
+    "hit_scenarios": 16,
+    "recommendations": 24,
+    "valid": 24,
+    "factual_checks": 24,
+    "factual_correct": 24,
+    "hard_checked": 23,
+    "hard_correct": 23,
+    "hit_passed": 16,
+    "scenario_passed": 24,
+    "food_checked": 6,
+    "food_correct": 4,
+    "unknown_budget_excluded": 1
+  },
+  "k": 3,
+  "dataset_version": 1,
+  "dataset_sha256": "4bfe91194867efaa9ba127fe1ac6fd62a994f0f0e5854924701b0ea84120b323",
+  "catalog_size": 3,
+  "known_price_count": 0,
+  "scenario_modes": {
+    "fallback_text": 20,
+    "structured": 4
+  },
+  "personalization_checks": {
+    "count": 1,
+    "passed": 1,
+    "rate": 1.0,
+    "details": [
+      {
+        "scenario_id": "personalization",
+        "wine_id": 2,
+        "passed": true,
+        "baseline_wine_ids": [
+          3,
+          2
+        ],
+        "personalized_wine_ids": [
+          2,
+          3
+        ],
+        "baseline_score": "0",
+        "personalized_score": "6",
+        "personalization_score": "6"
+      }
+    ]
+  },
+  "snapshot": [
+    {
+      "wine_id": 1,
+      "slug": "merlo-drozd",
+      "file": "merlo.html",
+      "source_url": "https://vino-svoe.ru/wines/merlo-drozd",
+      "sha256": "112786021e606d51d4a21ff1cb7d6af29d6dd0a8cf34c608134325cfcf4b804d",
+      "scraped_at": "2026-10-19T00:00:00Z"
+    },
+    {
+      "wine_id": 2,
+      "slug": "shenen-blan-beton-drozd",
+      "file": "shenen.html",
+      "source_url": "https://vino-svoe.ru/wines/shenen-blan-beton-drozd",
+      "sha256": "784a34cf78ef14fdb078f50a8c82561c0ec5ad27d45e9dea4c2bd3e94593466d",
+      "scraped_at": "2026-10-19T00:00:00Z"
+    },
+    {
+      "wine_id": 3,
+      "slug": "suhoe-beloe-traminer-pino-blan-sh-ardone",
+      "file": "blend.html",
+      "source_url": "https://vino-svoe.ru/wines/suhoe-beloe-traminer-pino-blan-sh-ardone",
+      "sha256": "678e28aa3e3066f37e4a3aaa35f969399d2942ab351ff537f5f57d4b7684c0c0",
+      "scraped_at": "2026-10-19T00:00:00Z"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "red-dry",
+      "mode": "fallback_text",
+      "message": "Красное сухое",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "white-dry",
+      "mode": "fallback_text",
+      "message": "Белое сухое",
+      "status": "ok",
+      "wine_ids": [
+        3,
+        2
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "merlot",
+      "mode": "fallback_text",
+      "message": "Мерло",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "chardonnay",
+      "mode": "fallback_text",
+      "message": "Шардоне",
+      "status": "ok",
+      "wine_ids": [
+        3
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "region",
+      "mode": "fallback_text",
+      "message": "Кубань сухое",
+      "status": "ok",
+      "wine_ids": [
+        1,
+        3,
+        2
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "combined",
+      "mode": "fallback_text",
+      "message": "Белое сухое Шардоне Кубань",
+      "status": "ok",
+      "wine_ids": [
+        3
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "steak",
+      "mode": "fallback_text",
+      "message": "Красное сухое к стейку",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "fish",
+      "mode": "fallback_text",
+      "message": "Белое сухое к рыбе",
+      "status": "ok",
+      "wine_ids": [
+        3,
+        2
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "cheese",
+      "mode": "fallback_text",
+      "message": "Красное сухое к сыру",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "dessert",
+      "mode": "fallback_text",
+      "message": "Белое сухое к десерту",
+      "status": "ok",
+      "wine_ids": [
+        3,
+        2
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "clarify",
+      "mode": "fallback_text",
+      "message": "Красное",
+      "status": "clarification",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "no-rose",
+      "mode": "fallback_text",
+      "message": "Розовое сухое",
+      "status": "no_candidates",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "no-sweet",
+      "mode": "fallback_text",
+      "message": "Красное сладкое",
+      "status": "no_candidates",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "unsupported",
+      "mode": "fallback_text",
+      "message": "Вино с космической энергией",
+      "status": "uninterpretable",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "budget-unknown",
+      "mode": "fallback_text",
+      "message": "Красное сухое до 2000 рублей",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "taste-berry",
+      "mode": "structured",
+      "message": "Хочется ягодного вина",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "taste-rich-no-evidence",
+      "mode": "structured",
+      "message": "Хочется насыщенного вина",
+      "status": "no_candidates",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "rating-not-relevance",
+      "mode": "fallback_text",
+      "message": "Выберите сами",
+      "status": "no_candidates",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "producer",
+      "mode": "fallback_text",
+      "message": "Вино Усадьба Маскага",
+      "status": "ok",
+      "wine_ids": [
+        3
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "grapes-all",
+      "mode": "fallback_text",
+      "message": "Пино Блан Шардоне",
+      "status": "ok",
+      "wine_ids": [
+        3
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "personalization",
+      "mode": "fallback_text",
+      "message": "Белое сухое",
+      "status": "ok",
+      "wine_ids": [
+        2,
+        3
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "history-vs-color",
+      "mode": "fallback_text",
+      "message": "Белое сухое",
+      "status": "ok",
+      "wine_ids": [
+        3,
+        2
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "source-category",
+      "mode": "structured",
+      "message": "Красное сухое",
+      "status": "ok",
+      "wine_ids": [
+        1
+      ],
+      "status_correct": true,
+      "success": true,
+      "hit": true,
+      "hard_constraint_failures": []
+    },
+    {
+      "id": "duck-not-steak",
+      "mode": "structured",
+      "message": "Утка с ягодным соусом, насыщенное вино без грубой терпкости",
+      "status": "no_candidates",
+      "wine_ids": [],
+      "status_correct": true,
+      "success": true,
+      "hit": "N/A",
+      "hard_constraint_failures": []
+    }
+  ],
+  "notes": [
+    "Фиксированный сокращённый снимок реальных карточек; не весь каталог сайта.",
+    "Внешняя модель не вызывается. Структурированные сценарии не измеряют понимание текста.",
+    "Основные метрики учитывают итоговые ответы; дополнительные базовые ответы персонализации в них не входят.",
+    "N/A означает отсутствие наблюдений. Бюджет неизвестных цен исключён из точности ограничений.",
+    "Бюджетные сценарии без цен проверяют честное предупреждение и не входят в HitRate@K.",
+    "HitRate@K — хотя бы одно совпадение с эталоном в первых K; это не абсолютная оценка вкуса."
+  ]
+}
