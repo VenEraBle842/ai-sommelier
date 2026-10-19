@@ -18,7 +18,9 @@ Taste = Literal[
     "дубовое",
     "пряное",
     "минеральное",
+    "насыщенное",
 ]
+NegativeTaste = Literal["грубая терпкость"]
 ShortText = Annotated[str, Field(min_length=1, max_length=160)]
 Terms = Annotated[list[ShortText], Field(max_length=10)]
 
@@ -39,11 +41,24 @@ class UserIntent(BaseModel):
     """Явные требования отделены от пожеланий, которые влияют только на баллы."""
 
     model_config = ConfigDict(extra="forbid")
-    dish: ShortText | None = None
-    normalized_food_categories: Terms = Field(default_factory=list)
+    dish: ShortText | None = Field(
+        default=None,
+        description="Исходное содержательное описание блюда словами пользователя, включая соус, гарнир и способ приготовления; не название категории каталога.",
+    )
+    normalized_food_categories: Terms = Field(
+        default_factory=list,
+        description="Только достаточно подходящие категории из переданного каталога. Если подходящей категории нет, вернуть пустой список, сохранив dish.",
+    )
     hard_constraints: Filters = Field(default_factory=Filters)
     soft_preferences: Filters = Field(default_factory=Filters)
-    taste_preferences: Annotated[list[Taste], Field(max_length=8)] = Field(default_factory=list)
+    taste_preferences: Annotated[list[Taste], Field(max_length=9)] = Field(
+        default_factory=list,
+        description="Положительные пожелания именно к вину, независимо от блюда и наличия гастрономической категории. Не переносить сюда свойства соуса и ингредиентов.",
+    )
+    negative_taste_preferences: Annotated[list[NegativeTaste], Field(max_length=1)] = Field(
+        default_factory=list,
+        description="Нежелательные свойства вина, указанные пользователем. Грубая терпкость означает избегание грубой/жёсткой терпкости или танинов, а не любой терпкости. Не считать отсутствие упоминания в каталоге подтверждением отсутствия свойства.",
+    )
     budget_max_rub: Annotated[Decimal, Field(gt=0, le=100000000, allow_inf_nan=False)] | None = None
     missing_information: list[Literal["color", "sweetness", "food", "unsupported_request"]] = Field(
         default_factory=list, max_length=4

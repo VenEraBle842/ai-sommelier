@@ -5,8 +5,15 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
+from app.recommendation.food import extract_dish_phrase
 from app.recommendation.schemas import UserIntent
-from app.recommendation.vocabulary import TASTE_PATTERNS, CatalogVocabulary, normalize
+from app.recommendation.taste import extract_taste_signals
+from app.recommendation.vocabulary import (
+    NEGATIVE_TASTE_REQUEST_PATTERN,
+    TASTE_REQUEST_PATTERNS,
+    CatalogVocabulary,
+    normalize,
+)
 
 FOOD_ALIASES = (
     (
@@ -36,7 +43,7 @@ def parse_fallback(message: str, vocabulary: CatalogVocabulary) -> FallbackResul
     remaining = original
     hard: dict = {}
     soft: dict = {}
-    tastes: list[str] = []
+    tastes, negative_tastes = extract_taste_signals(message)
     foods: list[str] = []
     dish = None
     ambiguous = False
@@ -56,9 +63,16 @@ def parse_fallback(message: str, vocabulary: CatalogVocabulary) -> FallbackResul
         else:
             budget = amount
     remaining = re.sub(budget_pattern, " ", remaining)
+    if negative_tastes:
+        remaining = re.sub(NEGATIVE_TASTE_REQUEST_PATTERN, " ", remaining)
     if re.search(r"\b(?:без|кроме|исключи\w*|не)\b", remaining):
         return FallbackResult(
-            UserIntent(missing_information=["unsupported_request"], needs_clarification=True),
+            UserIntent(
+                taste_preferences=tastes,
+                negative_taste_preferences=negative_tastes,
+                missing_information=["unsupported_request"],
+                needs_clarification=True,
+            ),
             False,
             True,
         )
@@ -141,24 +155,23 @@ def parse_fallback(message: str, vocabulary: CatalogVocabulary) -> FallbackResul
                 if normalize(value) in actual_foods
             )
             remaining = re.sub(pattern, " ", remaining)
-    for taste, pattern in TASTE_PATTERNS.items():
-        if re.search(pattern, remaining):
-            tastes.append(taste)
-            remaining = re.sub(pattern, " ", remaining)
+    for taste in tastes:
+        remaining = re.sub(TASTE_REQUEST_PATTERNS[taste], " ", remaining)
 
     remaining = re.sub(
-        r"\b(?:хочу|хочется|вино|вина|виноград|сорт|сорта|регион|региона|производитель|к|с|со|из|и|или|для|на|ужин|подбери|подберите|посоветуй|посоветуйте|порекомендуй|порекомендуйте|выбери|выберите|пожалуйста|желательно|предпочитаю|по|возможности|люблю|только|обязательно|ноты|нотами|ароматом|со|тогда|еще|лучше)\b",
+        r"\b(?:хочу|хочется|достаточно|вино|вина|виноград|сорт|сорта|регион|региона|производитель|к|с|со|из|и|или|для|на|ужин|подбери|подберите|посоветуй|посоветуйте|порекомендуй|порекомендуйте|выбери|выберите|пожалуйста|желательно|предпочитаю|по|возможности|люблю|только|обязательно|ноты|нотами|ароматом|со|тогда|еще|лучше)\b",
         " ",
         remaining,
     )
     unsupported = ambiguous or bool(re.sub(r"[\s.,!?:;\-–—«»\"()]", "", remaining))
-    recognized = any((hard, soft, tastes, dish, budget, defaults))
+    recognized = any((hard, soft, tastes, negative_tastes, dish, budget, defaults))
     intent = UserIntent.model_validate(
         {
             "hard_constraints": hard,
             "soft_preferences": soft,
             "taste_preferences": tastes,
-            "dish": dish,
+            "negative_taste_preferences": negative_tastes,
+            "dish": extract_dish_phrase(message) or dish,
             "normalized_food_categories": list(dict.fromkeys(foods)),
             "budget_max_rub": budget,
             "allow_defaults": defaults,
@@ -182,7 +195,7 @@ def merge_intents(previous: UserIntent | None, latest: UserIntent) -> UserIntent
         for key, value in getattr(latest, field).model_dump().items():
             if value:
                 values[field][key] = value
-    for key in ("dish", "taste_preferences", "budget_max_rub"):
+    for key in ("dish", "taste_preferences", "negative_taste_preferences", "budget_max_rub"):
         if value := getattr(latest, key):
             values[key] = value
     if latest.dish or latest.normalized_food_categories:
@@ -206,8 +219,8 @@ def clarification(intent: UserIntent) -> tuple[Literal["color", "sweetness"], st
             hard.color or soft.color,
             hard.sweetness or soft.sweetness or hard.source_categories or soft.source_categories,
             hard.regions or soft.regions,
-            intent.normalized_food_categories,
-            intent.taste_preferences,
+            intent.dish or intent.normalized_food_categories,
+            intent.taste_preferences or intent.negative_taste_preferences,
         )
     )
     if axes >= 2:

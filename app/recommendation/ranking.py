@@ -5,11 +5,12 @@ from decimal import Decimal
 
 from app.catalog.models import Wine
 from app.recommendation.schemas import Filters, ScoreComponent, UserIntent
-from app.recommendation.vocabulary import normalize, taste_evidence
+from app.recommendation.vocabulary import negative_taste_evidence, normalize, taste_evidence
 
 WEIGHTS = {
     "food": Decimal("10"),
     "taste": Decimal("3"),
+    "negative_taste": Decimal("-4"),
     "grape": Decimal("3"),
     "region": Decimal("2"),
     "producer": Decimal("2"),
@@ -50,6 +51,15 @@ class RankedWine:
     breakdown: list[ScoreComponent]
 
 
+def has_meaningful_relevance(candidate: RankedWine) -> bool:
+    """Допускать совпадение с запросом, но не рейтинг или сам факт наличия в каталоге."""
+    return any(
+        part.key == "constraints"
+        or (part.score > 0 and part.key.startswith(("food:", "taste:", "soft:")))
+        for part in candidate.breakdown
+    )
+
+
 def score_wine(wine: Wine, intent: UserIntent) -> RankedWine:
     """Начислить баллы только за совпадения с полями или описанием источника."""
     parts: list[ScoreComponent] = []
@@ -72,6 +82,19 @@ def score_wine(wine: Wine, intent: UserIntent) -> RankedWine:
                 "taste",
                 f"К пожеланию «{taste}» найдено упоминание в описании: «{evidence}».",
             )
+    for index, negative_taste in enumerate(dict.fromkeys(intent.negative_taste_preferences)):
+        evidence = negative_taste_evidence(wine.description, negative_taste)
+        parts.append(
+            ScoreComponent(
+                key=f"negative_taste:{index}",
+                score=WEIGHTS["negative_taste"] if evidence else Decimal(0),
+                reason=(
+                    f"Вы просили избегать свойства «{negative_taste}». В описании указано: «{evidence}». Балл снижен."
+                    if evidence
+                    else f"Каталог не даёт достаточных сведений, чтобы подтвердить отсутствие нежелательного свойства «{negative_taste}»."
+                ),
+            )
+        )
 
     soft = intent.soft_preferences
     for field, weight, label in (
@@ -98,7 +121,7 @@ def score_wine(wine: Wine, intent: UserIntent) -> RankedWine:
             if normalize(value) in preferences:
                 add(f"soft:{field}:{index}", weight, f"{label}: {value}.")
     hard = intent.hard_constraints
-    if any(
+    if matches_constraints(wine, hard) and any(
         (
             hard.color,
             hard.sweetness,

@@ -10,14 +10,21 @@ from app.catalog.repository import WineRepository
 from app.llm.base import LLMError, TextLLM
 from app.llm.schemas import ExplanationCandidate, ExplanationResponse, GroundedReason
 from app.recommendation.fallback import clarification, merge_intents, parse_fallback
-from app.recommendation.ranking import matches_constraints, rank_wines, score_wine
+from app.recommendation.food import extract_dish_phrase, validated_food_categories
+from app.recommendation.ranking import (
+    has_meaningful_relevance,
+    matches_constraints,
+    rank_wines,
+    score_wine,
+)
 from app.recommendation.schemas import (
     Recommendation,
     RecommendationRequest,
     RecommendationResponse,
     UserIntent,
 )
-from app.recommendation.vocabulary import CatalogVocabulary, normalize
+from app.recommendation.taste import reconcile_taste_signals
+from app.recommendation.vocabulary import CatalogVocabulary
 
 logger = logging.getLogger(__name__)
 BUDGET_UNAVAILABLE = "В каталоге нет подтверждённых цен. Учтены остальные пожелания, но соответствие вашему бюджету гарантировать нельзя."
@@ -63,11 +70,14 @@ class RecommendationService:
                 latest = UserIntent.model_validate(extracted.model_dump())
                 source = "llm"
                 # Буквально распознанное требование пользователя сильнее предположений модели.
-                if fallback.supported:
-                    latest = merge_intents(latest, fallback.intent)
-                elif not fallback.ambiguous:
+                if not fallback.ambiguous:
                     anchors = fallback.intent.model_copy(deep=True)
                     anchors.missing_information = latest.missing_information
+                    # Резервные совпадения не должны сокращать блюдо или навязывать категории LLM.
+                    anchors.dish = None
+                    anchors.normalized_food_categories = []
+                    anchors.taste_preferences = []
+                    anchors.negative_taste_preferences = []
                     latest = merge_intents(latest, anchors)
             except LLMError, ValidationError:
                 logger.warning("Извлечение предпочтений LLM недоступно или не прошло проверку.")
@@ -75,6 +85,8 @@ class RecommendationService:
                 use_llm_explanation = False
         else:
             warnings.append("Используется ограниченный локальный разбор без внешней модели.")
+        latest.dish = latest.dish or extract_dish_phrase(request.message)
+        latest = reconcile_taste_signals(request.message, latest)
         intent = merge_intents(request.previous_intent, latest)
         return self.recommend_intent(
             intent,
@@ -124,12 +136,11 @@ class RecommendationService:
                 message="Локальный каталог пуст. Сначала выполните синхронизацию каталога.",
                 **common,
             )
-        actual_foods = {normalize(v): v for w in wines for v in w.food_pairings}
-        valid_foods = [
-            actual_foods[normalize(v)]
-            for v in intent.normalized_food_categories
-            if normalize(v) in actual_foods
-        ]
+        valid_foods = validated_food_categories(
+            intent.dish,
+            intent.normalized_food_categories,
+            (v for w in wines for v in w.food_pairings),
+        )
         if len(valid_foods) != len(intent.normalized_food_categories) or (
             intent.dish and not valid_foods
         ):
@@ -159,13 +170,24 @@ class RecommendationService:
                 message="В локальном каталоге нет вин, удовлетворяющих всем обязательным ограничениям. Попробуйте изменить одно из требований.",
                 **common,
             )
+        eligible = [
+            candidate
+            for candidate in rank_wines(candidates, intent)
+            if has_meaningful_relevance(candidate)
+        ]
+        if not eligible:
+            return RecommendationResponse(
+                status="no_candidates",
+                message="В локальном каталоге нет вин с подтверждённым совпадением с вашими пожеланиями. Попробуйте уточнить блюдо или предпочтения.",
+                **common,
+            )
         if question := clarification(intent):
             intent.needs_clarification = True
             intent.missing_information = [question[0]]
             return RecommendationResponse(status="clarification", message=question[1], **common)
         intent.needs_clarification = False
         intent.missing_information = []
-        selected = rank_wines(candidates, intent)[:limit]
+        selected = eligible[:limit]
         # Повторное чтение обязательно: ни факты, ни итоговые ID не берутся из ответа модели.
         recommendations = []
         for candidate in selected:
@@ -177,6 +199,8 @@ class RecommendationService:
                 if wine.price_rub is None or wine.price_rub > intent.budget_max_rub:
                     continue
             ranked = score_wine(wine, intent)
+            if not has_meaningful_relevance(ranked):
+                continue
             reasons = [part.reason for part in ranked.breakdown]
             recommendations.append(
                 Recommendation(
@@ -258,5 +282,9 @@ class RecommendationService:
                     "Объяснение LLM не учитывает пожелания; сохранено исходное обоснование."
                 )
                 continue
-            item.reasons = [reasons[key] for key in dict.fromkeys(selection.reason_ids)]
+            # Модель не может скрыть штраф или неопределённость по нежелательному свойству.
+            required = [key for key in reasons if key.startswith("negative_taste:")]
+            item.reasons = [
+                reasons[key] for key in dict.fromkeys([*selection.reason_ids, *required])
+            ]
             item.explanation = " ".join(item.reasons)

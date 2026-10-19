@@ -15,7 +15,7 @@ from app.recommendation.fallback import parse_fallback
 from app.recommendation.ranking import matches_constraints, rank_wines
 from app.recommendation.schemas import Filters, RecommendationRequest, UserIntent
 from app.recommendation.service import RecommendationService
-from app.recommendation.vocabulary import CatalogVocabulary, taste_evidence
+from app.recommendation.vocabulary import CatalogVocabulary, negative_taste_evidence, taste_evidence
 
 
 @pytest.fixture
@@ -175,7 +175,7 @@ def test_taste_scoring_uses_literal_source_evidence(make_wine, repository):
     assert result.recommendations[0].wine_id == berry.id
     assert berry.id != plain.id
     assert "вишни и малины" in result.recommendations[0].explanation
-    assert not any(p.key.startswith("taste:") for p in result.recommendations[1].breakdown)
+    assert [item.wine_id for item in result.recommendations] == [berry.id]
 
 
 def test_missing_or_negated_taste_is_unknown():
@@ -336,7 +336,7 @@ def test_llm_cannot_modify_any_factual_fields(populated):
 )
 def test_unsafe_explanation_falls_back_to_grounded_reasons(populated, explanations):
     baseline = RecommendationService(populated).recommend(request())
-    result = RecommendationService(populated, FakeLLM(UserIntent(), explanations)).recommend(
+    result = RecommendationService(populated, FakeLLM(baseline.intent, explanations)).recommend(
         request()
     )
     assert result.recommendations[0].explanation == baseline.recommendations[0].explanation
@@ -360,7 +360,12 @@ def test_budget_known_prices_is_strict(make_wine, repository):
     make_wine(price_rub=Decimal("2000.01"))
     make_wine(price_rub=None)
     result = RecommendationService(repository).recommend_intent(
-        UserIntent(budget_max_rub=Decimal("2000"), allow_defaults=True), limit=5
+        UserIntent(
+            hard_constraints=Filters(color="красное"),
+            budget_max_rub=Decimal("2000"),
+            allow_defaults=True,
+        ),
+        limit=5,
     )
     assert result.budget_status == "applied"
     assert {r.wine_id for r in result.recommendations} == {cheap.id, equal.id}
@@ -397,7 +402,7 @@ def test_equal_scores_break_ties_by_id(make_wine, repository):
 
 
 def test_every_recommendation_id_exists_and_facts_come_from_repository(populated):
-    for message in ("красное сухое", "белое сухое к рыбе", "Мерло", "выберите сами"):
+    for message in ("красное сухое", "белое сухое к рыбе", "Мерло", "Кубань сухое"):
         result = RecommendationService(populated, FakeLLM(UserIntent())).recommend(request(message))
         assert result.status == "ok"
         for item in result.recommendations:
@@ -478,7 +483,7 @@ def test_valid_llm_json_handles_text_outside_fallback_vocabulary(populated):
 
 def test_explanation_cannot_ignore_request_in_favor_of_rating(populated):
     baseline = RecommendationService(populated).recommend(request())
-    fake = FakeLLM(UserIntent(), '{"explanations":[{"wine_id":1,"reason_ids":["rating"]}]}')
+    fake = FakeLLM(baseline.intent, '{"explanations":[{"wine_id":1,"reason_ids":["rating"]}]}')
     result = RecommendationService(populated, fake).recommend(request())
     assert result.recommendations[0].explanation == baseline.recommendations[0].explanation
 
@@ -489,9 +494,511 @@ def test_explanation_cannot_ignore_request_in_favor_of_rating(populated):
         {"budget_max_rub": -1},
         {"hard_constraints": {"color": "фиолетовое"}},
         {"taste_preferences": ["выдуманное"]},
+        {"negative_taste_preferences": ["нет танинов"]},
         {"extra": "не поддерживается"},
     ],
 )
 def test_intent_schema_rejects_unsupported_values(values):
     with pytest.raises(ValidationError):
         UserIntent.model_validate(values)
+
+
+@pytest.mark.parametrize("relevant_count", [1, 2])
+def test_limit_is_maximum_not_rating_only_padding(make_wine, repository, relevant_count):
+    relevant = [
+        make_wine(description="В аромате малина.", food_pairings=["Блюда из птицы"], rating=None)
+        for _ in range(relevant_count)
+    ]
+    unrelated = [
+        make_wine(
+            description="Нейтральное учебное описание.", food_pairings=[], rating=Decimal("5")
+        )
+        for _ in range(3)
+    ]
+    intent = UserIntent(
+        dish="утка с ягодным соусом",
+        normalized_food_categories=["Блюда из птицы"],
+        taste_preferences=["ягодное"],
+    )
+    fake = FakeLLM(intent)
+    result = RecommendationService(repository, fake).recommend_intent(intent, limit=3)
+    assert result.status == "ok"
+    assert [item.wine_id for item in result.recommendations] == [wine.id for wine in relevant]
+    assert len(result.recommendations) < 3
+    assert all(
+        item.wine_id not in {wine.id for wine in unrelated} for item in result.recommendations
+    )
+    assert [item.wine_id for item in fake.explanation_calls[0]] == [wine.id for wine in relevant]
+    assert all(repository.get(item.wine_id) == item.wine for item in result.recommendations)
+
+
+def test_no_meaningful_match_returns_no_candidates_even_with_high_ratings(make_wine, repository):
+    make_wine(
+        description="Нейтральное учебное описание.",
+        food_pairings=["Мясо и стейки"],
+        rating=Decimal("5"),
+    )
+    fake = FakeLLM(
+        UserIntent(
+            dish="индейка",
+            normalized_food_categories=["Блюда из птицы"],
+            taste_preferences=["ягодное"],
+        )
+    )
+    result = RecommendationService(repository, fake).recommend(
+        request("Ищу вино к индейке с ягодами")
+    )
+    assert result.status == "no_candidates"
+    assert result.recommendations == []
+    assert fake.explanation_calls == []
+
+
+@pytest.mark.parametrize("rating", [None, Decimal("0"), Decimal("5")])
+def test_default_request_does_not_bypass_relevance_gate(make_wine, repository, rating):
+    make_wine(rating=rating)
+    result = RecommendationService(repository).recommend(request("Выберите сами"))
+    assert result.status == "no_candidates"
+    assert result.recommendations == []
+
+
+@pytest.mark.parametrize(
+    "soft",
+    [
+        Filters(color="красное"),
+        Filters(sweetness="сухое"),
+        Filters(grapes=["Мерло"]),
+        Filters(regions=["Кубань"]),
+        Filters(producer="ДРОЗД. Вино&Виноградник"),
+        Filters(source_categories=["Красное сухое"]),
+    ],
+)
+def test_explicit_soft_match_qualifies_without_food_or_rating(make_wine, repository, soft):
+    wine = make_wine(rating=None, description=None, food_pairings=[])
+    result = RecommendationService(repository).recommend_intent(
+        UserIntent(soft_preferences=soft, allow_defaults=True)
+    )
+    assert result.status == "ok"
+    assert [item.wine_id for item in result.recommendations] == [wine.id]
+
+
+def test_relevance_is_rechecked_on_fresh_repository_record(make_wine, repository, monkeypatch):
+    wine = make_wine(description="В аромате малина.", food_pairings=[], rating=Decimal("5"))
+    original_get = repository.get
+
+    def refreshed(wine_id):
+        item = original_get(wine_id)
+        item.description = "Обновлённое описание без вкусовых упоминаний."
+        return item
+
+    monkeypatch.setattr(repository, "get", refreshed)
+    result = RecommendationService(repository).recommend_intent(
+        UserIntent(taste_preferences=["ягодное"], allow_defaults=True)
+    )
+    assert wine.id == 1
+    assert result.status == "no_candidates"
+    assert result.recommendations == []
+
+
+def test_duck_smoke_regression_does_not_force_meat_or_pad_results(make_wine, repository):
+    relevant = make_wine(
+        description="Насыщенный вкус. Аромат вишни и малины.", food_pairings=["Мясо и стейки"]
+    )
+    make_wine(description="Нейтральное описание.", food_pairings=["Мясо и стейки"])
+    make_wine(description="Нейтральное описание.", food_pairings=[])
+    fake = FakeLLM(
+        UserIntent(
+            dish=None, normalized_food_categories=["Мясо и стейки"], taste_preferences=["ягодное"]
+        )
+    )
+    message = "Ищу вино к утке с ягодным соусом. Хочется чего-нибудь достаточно насыщенного, но без слишком грубой терпкости."
+    result = RecommendationService(repository, fake).recommend(request(message, limit=3))
+    assert result.status == "ok"
+    assert result.intent.dish == "утке с ягодным соусом"
+    assert result.intent.normalized_food_categories == []
+    assert result.intent.taste_preferences == ["насыщенное"]
+    assert result.intent.negative_taste_preferences == ["грубая терпкость"]
+    assert [item.wine_id for item in result.recommendations] == [relevant.id]
+    assert not any(part.key.startswith("food:") for part in result.recommendations[0].breakdown)
+    assert any(part.key.startswith("taste:") for part in result.recommendations[0].breakdown)
+
+
+@pytest.mark.parametrize(
+    "message, expected, proposed, accepted",
+    [
+        (
+            "Посоветуйте вино к запечённой индейке с розмарином и овощами.",
+            "запечённой индейке с розмарином и овощами",
+            ["Мясо и стейки", "Блюда из птицы"],
+            ["Блюда из птицы"],
+        ),
+        (
+            "Ищу белое вино под жареного лосося с лимонным соусом!",
+            "жареного лосося с лимонным соусом",
+            ["Мясо и стейки", "Рыба и морепродукты"],
+            ["Рыба и морепродукты"],
+        ),
+        (
+            "Нужно вино для курицы с грибами, бюджет до 2000 рублей.",
+            "курицы с грибами",
+            ["Десерты", "Блюда из птицы"],
+            ["Блюда из птицы"],
+        ),
+        (
+            "Подберите вино к стейку из лосося с травами.",
+            "стейку из лосося с травами",
+            ["Мясо и стейки", "Рыба и морепродукты"],
+            ["Рыба и морепродукты"],
+        ),
+    ],
+)
+def test_raw_dish_recovered_and_categories_checked_for_varied_requests(
+    make_wine, repository, message, expected, proposed, accepted
+):
+    make_wine(food_pairings=["Мясо и стейки", "Блюда из птицы", "Рыба и морепродукты", "Десерты"])
+    fake = FakeLLM(UserIntent(dish=None, normalized_food_categories=proposed))
+    result = RecommendationService(repository, fake).recommend(request(message))
+    assert result.intent.dish == expected
+    assert result.intent.normalized_food_categories == accepted
+
+
+def test_complete_llm_dish_not_overwritten_by_fallback_token(populated):
+    dish = "лосось с лимонным соусом и овощами"
+    fake = FakeLLM(UserIntent(dish=dish, normalized_food_categories=["Рыба и морепродукты"]))
+    result = RecommendationService(populated, fake).recommend(
+        request("На ужин — лосось с лимонным соусом и овощами. Предпочитаю сухое.")
+    )
+    assert result.intent.dish == dish
+    assert result.intent.normalized_food_categories == ["Рыба и морепродукты"]
+
+
+def test_empty_llm_food_normalization_is_not_refilled_by_fallback(populated):
+    fake = FakeLLM(UserIntent(dish="стейк рибай с овощами", normalized_food_categories=[]))
+    result = RecommendationService(populated, fake).recommend(
+        request("Красное сухое к стейку рибай с овощами.")
+    )
+    assert result.intent.dish == "стейк рибай с овощами"
+    assert result.intent.normalized_food_categories == []
+    assert all(
+        not part.key.startswith("food:")
+        for item in result.recommendations
+        for part in item.breakdown
+    )
+
+
+def test_absent_poultry_category_not_fabricated_even_when_model_returns_it(make_wine, repository):
+    make_wine(food_pairings=["Мясо и стейки"], description="Нейтральное учебное описание.")
+    fake = FakeLLM(
+        UserIntent(
+            dish="гусь с яблоками", normalized_food_categories=["Блюда из птицы", "Мясо и стейки"]
+        )
+    )
+    result = RecommendationService(repository, fake).recommend(
+        request("Посоветуйте вино к гусю с яблоками.")
+    )
+    assert result.intent.dish == "гусь с яблоками"
+    assert result.intent.normalized_food_categories == []
+    assert result.status == "no_candidates"
+
+
+def test_full_llm_dish_not_replaced_by_purpose_phrase(populated):
+    dish = "запечённая утка с ягодным соусом"
+    fake = FakeLLM(UserIntent(dish=dish, taste_preferences=["ягодное"]))
+    result = RecommendationService(populated, fake).recommend(
+        request("Для праздничного ужина готовлю запечённую утку с ягодным соусом.")
+    )
+    assert result.intent.dish == dish
+
+
+@pytest.mark.parametrize(
+    "dish, category", [("утка по-пекински", "Азиатская кухня"), ("лосось на гриле", "BBQ")]
+)
+def test_cuisine_or_cooking_category_not_rejected_as_wrong_protein(
+    make_wine, repository, dish, category
+):
+    make_wine(food_pairings=[category, "Мясо и стейки"])
+    intent = UserIntent(dish=dish, normalized_food_categories=[category, "Мясо и стейки"])
+    result = RecommendationService(repository).recommend_intent(intent)
+    assert result.intent.normalized_food_categories == [category]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Ищу вино к утке с ягодным соусом. Хочется насыщенного вина без слишком грубой терпкости.",
+        "К индейке с яблоками предпочитаю полнотелое вино, без жёстких танинов.",
+        "К утке с ягодным соусом — насыщенное вино, без грубой терпкости.",
+    ],
+)
+def test_positive_and_negative_style_survive_missing_food_normalization(
+    make_wine, repository, message
+):
+    wine = make_wine(description="Полнотелое вино с насыщенным вкусом.", food_pairings=[])
+    make_wine(description="Нейтральное описание.", food_pairings=[], rating=Decimal(5))
+    fake = FakeLLM(UserIntent())
+    result = RecommendationService(repository, fake).recommend(request(message, limit=3))
+    assert result.status == "ok"
+    assert result.intent.dish
+    assert result.intent.normalized_food_categories == []
+    assert result.intent.taste_preferences == ["насыщенное"]
+    assert result.intent.negative_taste_preferences == ["грубая терпкость"]
+    assert [item.wine_id for item in result.recommendations] == [wine.id]
+    assert len(fake.explanation_calls[0]) == 1
+    assert result.recommendations[0].wine == repository.get(wine.id)
+
+
+@pytest.mark.parametrize(
+    "message, taste",
+    [
+        ("Вино к утке с ягодным соусом", "ягодное"),
+        ("Хочу ягодное желе", "ягодное"),
+        ("Ягодный соус", "ягодное"),
+        ("Насыщенный соус", "насыщенное"),
+        ("Вино к насыщенному рагу", "насыщенное"),
+    ],
+)
+def test_dish_adjective_is_not_a_wine_preference(populated, message, taste):
+    fake = FakeLLM(UserIntent(taste_preferences=[taste]))
+    result = RecommendationService(populated, fake).recommend(request(message))
+    assert result.intent.taste_preferences == []
+    assert result.status == "no_candidates"
+    assert result.recommendations == []
+    parsed = parse_fallback(message, CatalogVocabulary.from_wines(populated.list_wines()))
+    assert parsed.intent.taste_preferences == []
+
+
+def test_separately_requested_berry_wine_is_not_erased_with_berry_sauce(populated):
+    result = RecommendationService(
+        populated, FakeLLM(UserIntent(taste_preferences=["ягодное"]))
+    ).recommend(request("Вино к утке с ягодным соусом. Хочу ягодное вино."))
+    assert result.intent.taste_preferences == ["ягодное"]
+    assert result.status == "ok"
+    assert any(part.key.startswith("taste:") for part in result.recommendations[0].breakdown)
+
+
+@pytest.mark.parametrize(
+    "message, positive, negative",
+    [
+        ("Хочется насыщенного вина", ["насыщенное"], []),
+        ("Хочу полнотелое вино", ["насыщенное"], []),
+        ("Красное плотное вино без грубой терпкости", ["насыщенное"], ["грубая терпкость"]),
+        (
+            "Хочу вино без грубой терпкости и достаточно насыщенное",
+            ["насыщенное"],
+            ["грубая терпкость"],
+        ),
+        ("Красное без слишком грубых танинов", [], ["грубая терпкость"]),
+        ("Красное без жёсткой терпкости", [], ["грубая терпкость"]),
+    ],
+)
+def test_small_fallback_vocabulary_distinguishes_positive_and_avoidance(
+    populated, message, positive, negative
+):
+    result = parse_fallback(message, CatalogVocabulary.from_wines(populated.list_wines()))
+    assert result.supported
+    assert result.intent.taste_preferences == positive
+    assert result.intent.negative_taste_preferences == negative
+
+
+@pytest.mark.parametrize("message", ["Без терпкости", "Красное не сухое", "Хочу невесомое вино"])
+def test_unrepresented_style_expressions_are_not_guessed(populated, message):
+    result = RecommendationService(populated).recommend(request(message))
+    assert result.status == "uninterpretable"
+    assert result.recommendations == []
+
+
+@pytest.mark.parametrize(
+    "description, expected",
+    [
+        ("Насыщенный вкус с долгим послевкусием.", True),
+        ("Вкус насыщенный и длительный.", True),
+        ("Полнотелое вино.", True),
+        ("Интенсивный вкус с нотами специй.", True),
+        ("Плотное вино с полным телом.", True),
+        ("Тело плотное.", True),
+        ("Вино плотное.", True),
+        ("Интенсивный аромат с нотами специй.", False),
+        ("Насыщенный аромат. Тело и кислотность средние.", False),
+        ("Тело среднее.", False),
+        ("Плотные танины и интенсивная кислотность.", False),
+        ("Сладкое, фруктовое, свежее и мягкое вино.", False),
+        ("Насыщенный вкусовой аромат.", False),
+        ("Насыщенный рубиновый цвет.", False),
+        ("Вино насыщенного рубинового цвета.", False),
+        ("Плотная этикетка.", False),
+        ("Вкус не насыщенный.", False),
+        ("Без интенсивного аромата.", False),
+    ],
+)
+def test_rich_style_requires_source_backed_taste_or_body_evidence(description, expected):
+    evidence = taste_evidence(description, "насыщенное")
+    assert bool(evidence) is expected
+    if evidence:
+        assert evidence in description
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Интенсивный аромат.",
+        "Аромат насыщенный. Тело и кислотность средние.",
+        "Тело среднее. Плотные танины.",
+        "Мягкое, свежее и фруктовое вино.",
+    ],
+)
+def test_other_sensory_properties_do_not_qualify_rich_wine_request(
+    make_wine, repository, description
+):
+    wine = make_wine(description=description, food_pairings=[], rating=Decimal(5))
+    intent = UserIntent(taste_preferences=["насыщенное"], allow_defaults=True)
+    ranked = rank_wines([wine], intent)
+    assert all(not part.key.startswith("taste:") for part in ranked[0].breakdown)
+    result = RecommendationService(repository).recommend_intent(intent)
+    assert result.status == "no_candidates"
+    assert result.recommendations == []
+
+
+def test_real_intense_aroma_and_medium_body_are_not_richness_evidence(repository, merlo):
+    wine = repository.upsert(merlo)
+    assert "Аромат интенсивный" in wine.description
+    assert "Тело и кислотность средние" in wine.description
+    intent = UserIntent(
+        dish="утка с ягодным соусом",
+        taste_preferences=["насыщенное"],
+        negative_taste_preferences=["грубая терпкость"],
+    )
+    result = RecommendationService(repository).recommend_intent(intent)
+    assert result.status == "no_candidates"
+    assert result.intent.dish == intent.dish
+    assert result.intent.taste_preferences == ["насыщенное"]
+    assert result.intent.negative_taste_preferences == ["грубая терпкость"]
+    assert result.recommendations == []
+
+
+@pytest.mark.parametrize("description", ["Полнотелое вино.", "Плотное тело.", "Вкус насыщенный."])
+def test_grounded_richness_qualifies_without_aroma_only_padding(make_wine, repository, description):
+    relevant = make_wine(description=description, food_pairings=[], rating=None)
+    make_wine(description="Аромат интенсивный. Тело среднее.", food_pairings=[], rating=Decimal(5))
+    result = RecommendationService(repository).recommend_intent(
+        UserIntent(taste_preferences=["насыщенное"], allow_defaults=True), limit=3
+    )
+    assert result.status == "ok"
+    assert [item.wine_id for item in result.recommendations] == [relevant.id]
+    item = result.recommendations[0]
+    assert item.wine == repository.get(item.wine_id)
+    assert description in item.explanation
+    assert any(part.key == "taste:0" and part.score > 0 for part in item.breakdown)
+
+
+@pytest.mark.parametrize(
+    "description, expected",
+    [
+        ("Во вкусе грубая терпкость.", True),
+        ("Жёсткие танины в послевкусии.", True),
+        ("Танины грубые.", True),
+        ("Танины мягкие.", False),
+        ("Без грубых танинов.", False),
+        ("Танины не грубые.", False),
+        ("Грубая терпкость отсутствует.", False),
+        ("Грубые танины не выражены.", False),
+        (None, False),
+    ],
+)
+def test_only_explicit_undesirable_source_characteristics_have_evidence(description, expected):
+    evidence = negative_taste_evidence(description, "грубая терпкость")
+    assert bool(evidence) is expected
+    if evidence:
+        assert evidence in description
+
+
+def test_avoidance_penalizes_explicit_evidence_but_never_rewards_silence(make_wine, repository):
+    rough = make_wine(description="Насыщенный вкус. Грубая терпкость.", food_pairings=[])
+    unknown = make_wine(description="Насыщенный вкус.", food_pairings=[])
+    baseline = RecommendationService(repository).recommend_intent(
+        UserIntent(taste_preferences=["насыщенное"], allow_defaults=True)
+    )
+    intent = UserIntent(
+        taste_preferences=["насыщенное"],
+        negative_taste_preferences=["грубая терпкость"],
+        allow_defaults=True,
+    )
+    result = RecommendationService(repository).recommend_intent(intent)
+    assert [item.wine_id for item in result.recommendations] == [unknown.id, rough.id]
+    old_scores = {item.wine_id: item.score for item in baseline.recommendations}
+    assert result.recommendations[0].score == old_scores[unknown.id]
+    assert result.recommendations[1].score < old_scores[rough.id]
+    assert "Грубая терпкость" in result.recommendations[1].explanation
+    assert "не даёт достаточных сведений" in result.recommendations[0].explanation
+    for item in result.recommendations:
+        assert item.score == sum((part.score for part in item.breakdown), Decimal(0))
+        assert item.wine == repository.get(item.wine_id)
+        assert "точно не терпкое" not in item.explanation
+
+
+@pytest.mark.parametrize("description", [None, "Нейтральное описание.", "Грубая терпкость."])
+def test_avoidance_and_rating_alone_never_qualify_a_candidate(make_wine, repository, description):
+    make_wine(description=description, food_pairings=[], rating=Decimal(5))
+    result = RecommendationService(repository).recommend_intent(
+        UserIntent(negative_taste_preferences=["грубая терпкость"], allow_defaults=True)
+    )
+    assert result.status == "no_candidates"
+    assert result.recommendations == []
+
+
+@pytest.mark.parametrize("description", ["Насыщенный вкус.", "Насыщенный вкус. Грубая терпкость."])
+def test_llm_cannot_hide_avoidance_penalty_or_uncertainty(make_wine, repository, description):
+    wine = make_wine(description=description, food_pairings=[])
+    fake = FakeLLM(
+        UserIntent(),
+        json.dumps({"explanations": [{"wine_id": wine.id, "reason_ids": ["taste:0"]}]}),
+    )
+    intent = UserIntent(
+        taste_preferences=["насыщенное"],
+        negative_taste_preferences=["грубая терпкость"],
+        allow_defaults=True,
+    )
+    result = RecommendationService(repository, fake).recommend_intent(intent)
+    negative_reason = next(
+        part.reason
+        for part in result.recommendations[0].breakdown
+        if part.key.startswith("negative_taste:")
+    )
+    assert negative_reason in result.recommendations[0].reasons
+    assert negative_reason in result.recommendations[0].explanation
+
+
+def test_no_rich_source_evidence_remains_no_match_even_when_intent_is_preserved(
+    make_wine, repository
+):
+    make_wine(description="Насыщенный рубиновый цвет.", food_pairings=[], rating=Decimal(5))
+    message = "Ищу вино к утке с ягодным соусом. Хочется насыщенного вина без грубой терпкости."
+    result = RecommendationService(repository, FakeLLM(UserIntent())).recommend(request(message))
+    assert result.intent.taste_preferences == ["насыщенное"]
+    assert result.intent.negative_taste_preferences == ["грубая терпкость"]
+    assert result.intent.normalized_food_categories == []
+    assert result.status == "no_candidates"
+
+
+def test_negative_preferences_persist_in_dialogue_context(populated):
+    service = RecommendationService(populated)
+    first = service.recommend(request("Красное насыщенное без грубой терпкости"))
+    second = service.recommend(request("к стейку", previous_intent=first.intent))
+    assert second.intent.negative_taste_preferences == ["грубая терпкость"]
+    assert second.intent.taste_preferences == ["насыщенное"]
+    assert second.intent.hard_constraints.color == "красное"
+    assert all(item.wine == populated.get(item.wine_id) for item in second.recommendations)
+
+
+def test_avoidance_describing_sauce_not_transferred_to_wine(make_wine, repository):
+    make_wine(description="Насыщенный вкус.", food_pairings=[])
+    intent = UserIntent(negative_taste_preferences=["грубая терпкость"])
+    message = "Хочу вино к соусу без слишком грубой терпкости. Предпочитаю насыщенное вино."
+    result = RecommendationService(repository, FakeLLM(intent)).recommend(request(message))
+    assert result.intent.negative_taste_preferences == []
+    assert result.intent.taste_preferences == ["насыщенное"]
+
+
+def test_negated_style_is_not_preserved_as_positive_from_model(populated):
+    fake = FakeLLM(UserIntent(taste_preferences=["насыщенное"]))
+    result = RecommendationService(populated, fake).recommend(request("Не хочу насыщенного вина"))
+    assert result.intent.taste_preferences == []
+    assert result.recommendations == []

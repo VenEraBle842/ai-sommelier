@@ -221,3 +221,31 @@ def test_injected_http_client_remains_owned_by_caller():
     with httpx.Client(transport=httpx.MockTransport(lambda _: completion("{}"))) as http:
         CompatibleTextClient(settings(), client=http).close()
         assert not http.is_closed
+
+
+def test_protocol_validates_positive_and_negative_tastes_independently_of_food():
+    def handler(request):
+        payload = json.loads(request.content)
+        instructions = payload["messages"][0]["content"]
+        assert "negative_taste_preferences" in instructions
+        assert "свойства соуса" in instructions
+        return completion(
+            json.dumps(
+                {
+                    "dish": "утка с ягодным соусом",
+                    "normalized_food_categories": [],
+                    "taste_preferences": ["насыщенное"],
+                    "negative_taste_preferences": ["грубая терпкость"],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        intent = CompatibleTextClient(settings(), client=http).extract_preferences(
+            "К утке хочу насыщенного вина без грубой терпкости", []
+        )
+    assert intent.dish == "утка с ягодным соусом"
+    assert intent.normalized_food_categories == []
+    assert intent.taste_preferences == ["насыщенное"]
+    assert intent.negative_taste_preferences == ["грубая терпкость"]
